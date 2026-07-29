@@ -52,3 +52,8 @@ if st.session_state.state.get("quiz_data"):
 
             if st.session_state.state.get("remedial_content"):
                 st.warning("### Remedial Practice\n" + st.session_state.state["remedial_content"])
+
+            if st.button("Get Final Progress Report"):
+                st.session_state.state["next_step"] = "generate_report"
+                st.session_state.state = st.session_state.graph.invoke(st.session_state.state)
+                st.json(st.session_state.state["final_report"])
