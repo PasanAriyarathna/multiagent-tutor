@@ -37,3 +37,18 @@ if st.button("Take a Quiz"):
 if st.session_state.state.get("quiz_data"):
     st.write(st.session_state.state["quiz_data"])
     answer = st.text_area("Your Answer:")
+
+    if st.button("Submit Answer"):
+        st.session_state.state["student_answer"] = answer
+        st.session_state.state["next_step"] = "evaluate_answer"
+        with st.spinner("Evaluating Code and Logic..."):
+            st.session_state.state = st.session_state.graph.invoke(st.session_state.state)
+
+            eval_res = st.session_state.state["evaluation_result"]
+            st.write(f"**Score:** {eval_res.get('score')}")
+            st.write(f"**Feedback:** {eval_res.get('feedback')}")
+            if eval_res.get("code_errors"):
+                st.error(eval_res["code_errors"])
+
+            if st.session_state.state.get("remedial_content"):
+                st.warning("### Remedial Practice\n" + st.session_state.state["remedial_content"])
