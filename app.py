@@ -26,3 +26,14 @@ if st.button("Ask a question about this topic"):
         with st.spinner("Explaining..."):
             st.session_state.state = st.session_state.graph.invoke(st.session_state.state)
         st.info(st.session_state.state["explanation_text"])
+
+if st.button("Take a Quiz"):
+    with st.spinner("Generating Quiz..."):
+        st.session_state.state["topic"] = topic
+        st.session_state.state["next_step"] = "generate_quiz"
+        st.session_state.state = st.session_state.graph.invoke(st.session_state.state)
+        st.success("Quiz Generated!")
+
+if st.session_state.state.get("quiz_data"):
+    st.write(st.session_state.state["quiz_data"])
+    answer = st.text_area("Your Answer:")
