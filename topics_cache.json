@@ -1,0 +1,40 @@
+{
+  "AI & ML": [
+    "AI Agent Design Patterns",
+    "Introduction to Machine Learning",
+    "Prompt Engineering & Context Engineering",
+    "LangChain Tutorial"
+  ],
+  "Data Science": [
+    "Data Mining: Introduction",
+    "Data Mining: Data Preprocessing",
+    "Data Acquisition Strategy, Privacy & Data Quality",
+    "NUMPY and PANDAS Review"
+  ],
+  "Networking": [
+    "API Endpoints",
+    "API Keys SpringAPI",
+    "Lab Practical SOC2",
+    "Lab Practical Sheet: Simulating RESTful Web Services"
+  ],
+  "Web Services": [
+    "Introduction to webservice development",
+    "Lab-Week2",
+    "Rest Lab Activity",
+    "Understanding JSON"
+  ],
+  "Mathematics": [
+    "BasicStat",
+    "Matrices"
+  ],
+  "Data Visualization": [
+    "Data Visualization"
+  ],
+  "Web Development": [
+    "html client with node express"
+  ],
+  "Theory": [
+    "Data Preprocessing",
+    "Lecture - 04"
+  ]
+}
