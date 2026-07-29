@@ -14,3 +14,15 @@ if "state" not in st.session_state:
     )
 
 st.title("🧠 AI Tutoring & Adaptive RAG System")
+
+topic = st.text_input("What topic are you studying?", value="Python Loops")
+
+if st.button("Ask a question about this topic"):
+    question = st.text_input("Your Question:")
+    if question:
+        st.session_state.state["topic"] = topic
+        st.session_state.state["student_question"] = question
+        st.session_state.state["next_step"] = "explain"
+        with st.spinner("Explaining..."):
+            st.session_state.state = st.session_state.graph.invoke(st.session_state.state)
+        st.info(st.session_state.state["explanation_text"])
