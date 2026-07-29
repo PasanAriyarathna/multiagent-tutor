@@ -25,9 +25,10 @@ class TutorState(TypedDict):
 router_llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0)
 quiz_eval_llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.2)
 report_llm = ChatOpenAI(
-    model="anthropic/claude-3.5-sonnet",
+    model="anthropic/claude-sonnet-4.5",
     api_key=os.environ.get("OPENROUTER_API_KEY"),
-    base_url="https://openrouter.ai/api/v1"
+    base_url="https://openrouter.ai/api/v1",
+    max_tokens=1000
 )
 
 retriever = build_rag_pipeline()
@@ -68,7 +69,8 @@ def quiz_generation_agent(state: TutorState) -> TutorState:
         context = "\n".join([d.page_content for d in docs])
 
     prompt = f"""Context:\n{context}\n\nGenerate a JSON quiz on {state['topic']}. Include at least 1 code snippet question.
-    Format MUST be exactly: {{"questions": [{{"type": "mcq|code|short_answer", "question": "...", "options": [], "answer": "..."}}]}}"""
+    Generate questions ONLY using facts, definitions, and examples found in the provided context below. Do NOT introduce any information that is not present in the context. If the context does not contain enough material for a question type, skip it rather than inventing content.
+    Format MUST be exactly: {{"questions": [{{"type": "mcq|code|short_answer", "question": "...", "options": [], "answer": "...", "source_context": "..."}}]}}"""
 
     response = quiz_eval_llm.invoke(prompt)
     state["quiz_data"] = response.content
@@ -82,10 +84,14 @@ def evaluation_agent(state: TutorState) -> TutorState:
         context = "\n".join([d.page_content for d in docs])
 
     prompt = f"""Context: {context}
-    Student Answer: {state['student_answer']}
-    Evaluate the answer strictly based on the context. If there are code errors, classify as syntax_error, logic_error, or concept_mistake.
+    Student Answer Data: {state['student_answer']}
+    Evaluate the answer strictly based on the context. Compare the student's submitted answer against the correct answer for this exact question AND the original source_context.
+    Instruct the LLM clearly: Compare the student_answer to the correct_answer for this exact question. If student_answer is empty, whitespace, or clearly does not attempt the question, verdict must be 'incorrect'. Only mark 'correct' if the student_answer genuinely matches or is equivalent in meaning to the correct_answer for MCQ/short_answer, or is functionally correct code for code questions.
+    Produce a clear per-question correctness verdict: exactly "correct" or "incorrect".
+    - If verdict is "correct": do NOT generate any additional explanation. leave weak_concepts empty.
+    - If verdict is "incorrect": generate a short explanation that addresses ONLY that specific question and its specific concept. Scope it narrowly to why THIS answer was wrong and what the correct answer is, grounded in the source_context.
     Return strictly JSON:
-    {{"score": int, "weak_concepts": ["..."], "strong_concepts": ["..."], "code_errors": [{{"type": "logic_error", "description": "...", "correct_code": "...", "explanation": "..."}}], "feedback": "..."}}"""
+    {{"question": "...", "student_answer": "...", "correct_answer": "...", "verdict": "correct" | "incorrect", "explanation": "...", "weak_concepts": ["..."]}}"""
 
     response = quiz_eval_llm.invoke(prompt)
 
@@ -93,7 +99,7 @@ def evaluation_agent(state: TutorState) -> TutorState:
         json_str = response.content[response.content.find('{'):response.content.rfind('}')+1]
         eval_dict = json.loads(json_str)
     except:
-        eval_dict = {"score": 50, "weak_concepts": ["syntax"], "strong_concepts": [], "code_errors": [], "feedback": "Failed to parse JSON."}
+        eval_dict = {"verdict": "incorrect", "weak_concepts": ["unknown"], "explanation": "Failed to parse JSON."}
 
     state["evaluation_result"] = eval_dict
 
@@ -118,7 +124,16 @@ def remedial_rag_agent(state: TutorState) -> TutorState:
             if retriever:
                 docs = retriever.invoke(f"basic explanation of {wc}")
                 context = "\n".join([d.page_content for d in docs])
-            prompt = f"Using context:\n{context}\n\nProvide a simplified re-explanation of {wc} with an example, and 2 targeted practice questions."
+            prompt = f"""Using context:
+{context}
+
+The student answered incorrectly.
+{state.get('student_answer')}
+
+CRITICAL RULE: Your explanation MUST be 100% specific to this exact question and the correct answer provided.
+- STRICTLY PROHIBIT falling back to general topic re-explanations (e.g., general definitions of the main topic or unrelated concepts).
+- Explain ONLY why the correct answer is correct for this specific problem, and why the student's answer is wrong.
+- Keep the feedback concise and targeted."""
             remedial_texts.append(report_llm.invoke(prompt).content)
         state["remedial_content"] = "\n\n---\n\n".join(remedial_texts)
 
