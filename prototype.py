@@ -25,7 +25,7 @@ def build_rag_pipeline(pdf_directory="./lessons"):
     embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
     vectorstore = FAISS.from_documents(splits, embeddings)
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 10})
     return retriever
 
 def evaluate_rag(retriever):

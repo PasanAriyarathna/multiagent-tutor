@@ -24,12 +24,7 @@ class TutorState(TypedDict):
 
 router_llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0)
 quiz_eval_llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.2)
-report_llm = ChatOpenAI(
-    model="anthropic/claude-sonnet-4.5",
-    api_key=os.environ.get("OPENROUTER_API_KEY"),
-    base_url="https://openrouter.ai/api/v1",
-    max_tokens=1000
-)
+report_llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0.1)
 
 retriever = build_rag_pipeline()
 
@@ -86,10 +81,10 @@ def evaluation_agent(state: TutorState) -> TutorState:
     prompt = f"""Context: {context}
     Student Answer Data: {state['student_answer']}
     Evaluate the answer strictly based on the context. Compare the student's submitted answer against the correct answer for this exact question AND the original source_context.
-    Instruct the LLM clearly: Compare the student_answer to the correct_answer for this exact question. If student_answer is empty, whitespace, or clearly does not attempt the question, verdict must be 'incorrect'. Only mark 'correct' if the student_answer genuinely matches or is equivalent in meaning to the correct_answer for MCQ/short_answer, or is functionally correct code for code questions.
+    Instruct the LLM clearly: Compare the student_answer to the correct_answer for this exact question. If student_answer is empty, whitespace, or clearly does not attempt the question, verdict must be 'incorrect'. Mark the answer as 'correct' if the student's answer contains or clearly conveys the correct answer's core meaning, even if phrased differently, more verbosely, or with additional correct supporting detail. Only mark 'incorrect' if the core answer is factually wrong, missing, or contradicts the correct_answer. Do not penalize a student for adding correct extra explanation alongside the right answer.
     Produce a clear per-question correctness verdict: exactly "correct" or "incorrect".
     - If verdict is "correct": do NOT generate any additional explanation. leave weak_concepts empty.
-    - If verdict is "incorrect": generate a short explanation that addresses ONLY that specific question and its specific concept. Scope it narrowly to why THIS answer was wrong and what the correct answer is, grounded in the source_context.
+    - If verdict is "incorrect": write a thorough, beginner-friendly explanation (4-8 sentences) scoped ONLY to this specific question's concept. Your explanation MUST: (1) explain why the given answer is wrong (what misconception it reflects), (2) explain why the correct answer is right using the provided source_context, (3) include a concrete example or analogy from the context if available, and (4) end with one clear key takeaway sentence. If no answer was submitted, still provide this full educational explanation — just note briefly at the start that no answer was given, then proceed to teach the concept fully.
     Return strictly JSON:
     {{"question": "...", "student_answer": "...", "correct_answer": "...", "verdict": "correct" | "incorrect", "explanation": "...", "weak_concepts": ["..."]}}"""
 
