@@ -1,5 +1,6 @@
 import os
 import json
+import time
 from typing import TypedDict, List, Dict
 from langgraph.graph import StateGraph, END
 from langchain_groq import ChatGroq
@@ -22,26 +23,44 @@ class TutorState(TypedDict):
     profile_metrics: dict
     next_step: str
 
-router_llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0)
-quiz_eval_llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.2)
-report_llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0.1)
+router_llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0, max_tokens=800)
+quiz_eval_llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.2, max_tokens=800)
+report_llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0.1, max_tokens=800)
 
 retriever = build_rag_pipeline()
+
+def invoke_with_retry(llm, prompt, max_retries=3):
+    retries = 0
+    while retries < max_retries:
+        try:
+            return llm.invoke(prompt)
+        except Exception as e:
+            err_msg = str(e).lower()
+            if "rate_limit" in err_msg or "429" in err_msg:
+                retries += 1
+                if retries >= max_retries:
+                    raise e
+                time.sleep(2 ** retries)
+            else:
+                raise e
 
 # --- 3. Agent Nodes ---
 
 def router_agent(state: TutorState) -> TutorState:
     """Agent 0: Router Pattern."""
-    if state.get("student_question") and not state.get("explanation_text"):
-        state["next_step"] = "explain"
-    elif not state.get("quiz_data"):
-        state["next_step"] = "generate_quiz"
-    elif state.get("student_answer") and not state.get("evaluation_result"):
-        state["next_step"] = "evaluate_answer"
-    elif state.get("evaluation_result") and state["evaluation_result"].get("weak_concepts"):
+    current_step = state.get("next_step")
+    
+    if current_step == "end":
+        return state
+        
+    if current_step in ["explain", "generate_quiz", "evaluate_answer", "generate_report"]:
+        return state
+
+    # Fallback / state machine logic for evaluation loop
+    if state.get("evaluation_result") and state.get("evaluation_result").get("weak_concepts"):
         state["next_step"] = "remedial_rag"
     else:
-        state["next_step"] = "generate_report"
+        state["next_step"] = "end"
     return state
 
 def explainer_agent(state: TutorState) -> TutorState:
@@ -49,25 +68,26 @@ def explainer_agent(state: TutorState) -> TutorState:
     context = ""
     if retriever:
         docs = retriever.invoke(f"{state['topic']} {state['student_question']}")
-        context = "\n".join([d.page_content for d in docs])
+        context = "\n".join([d.page_content[:500] for d in docs])
 
     prompt = f"Using context:\n{context}\n\nExplain '{state['student_question']}' simply for a beginner."
-    response = router_llm.invoke(prompt)
+    response = invoke_with_retry(router_llm, prompt)
     state["explanation_text"] = response.content
-    state["next_step"] = "generate_quiz"
+    state["next_step"] = "end"
     return state
+
 def quiz_generation_agent(state: TutorState) -> TutorState:
     """Agent 2: Generates structured quiz from RAG context."""
     context = ""
     if retriever:
         docs = retriever.invoke(state['topic'])
-        context = "\n".join([d.page_content for d in docs])
+        context = "\n".join([d.page_content[:500] for d in docs])
 
     prompt = f"""Context:\n{context}\n\nGenerate a JSON quiz on {state['topic']}. Include at least 1 code snippet question.
     Generate questions ONLY using facts, definitions, and examples found in the provided context below. Do NOT introduce any information that is not present in the context. If the context does not contain enough material for a question type, skip it rather than inventing content.
     Format MUST be exactly: {{"questions": [{{"type": "mcq|code|short_answer", "question": "...", "options": [], "answer": "...", "source_context": "..."}}]}}"""
 
-    response = quiz_eval_llm.invoke(prompt)
+    response = invoke_with_retry(quiz_eval_llm, prompt)
     state["quiz_data"] = response.content
     return state
 
@@ -76,7 +96,7 @@ def evaluation_agent(state: TutorState) -> TutorState:
     context = ""
     if retriever:
         docs = retriever.invoke(state['topic'])
-        context = "\n".join([d.page_content for d in docs])
+        context = "\n".join([d.page_content[:500] for d in docs])
 
     prompt = f"""Context: {context}
     Student Answer Data: {state['student_answer']}
@@ -88,7 +108,7 @@ def evaluation_agent(state: TutorState) -> TutorState:
     Return strictly JSON:
     {{"question": "...", "student_answer": "...", "correct_answer": "...", "verdict": "correct" | "incorrect", "explanation": "...", "weak_concepts": ["..."]}}"""
 
-    response = quiz_eval_llm.invoke(prompt)
+    response = invoke_with_retry(quiz_eval_llm, prompt)
 
     try:
         json_str = response.content[response.content.find('{'):response.content.rfind('}')+1]
@@ -105,8 +125,18 @@ def evaluation_agent(state: TutorState) -> TutorState:
     for sc in eval_dict.get("strong_concepts", []):
         topic_metrics[sc] = 100
     metrics[state["topic"]] = topic_metrics
+    
+    # Store QA history for report generation
+    qa_history = metrics.get("qa_history", [])
+    qa_history.append({
+        "student_answer_data": state.get("student_answer", ""),
+        "verdict": eval_dict.get("verdict", "incorrect"),
+        "explanation": eval_dict.get("explanation", "")
+    })
+    metrics["qa_history"] = qa_history
     state["profile_metrics"] = metrics
 
+    state["next_step"] = ""
     return state
 
 def remedial_rag_agent(state: TutorState) -> TutorState:
@@ -118,7 +148,7 @@ def remedial_rag_agent(state: TutorState) -> TutorState:
             context = ""
             if retriever:
                 docs = retriever.invoke(f"basic explanation of {wc}")
-                context = "\n".join([d.page_content for d in docs])
+                context = "\n".join([d.page_content[:500] for d in docs])
             prompt = f"""Using context:
 {context}
 
@@ -129,20 +159,31 @@ CRITICAL RULE: Your explanation MUST be 100% specific to this exact question and
 - STRICTLY PROHIBIT falling back to general topic re-explanations (e.g., general definitions of the main topic or unrelated concepts).
 - Explain ONLY why the correct answer is correct for this specific problem, and why the student's answer is wrong.
 - Keep the feedback concise and targeted."""
-            remedial_texts.append(report_llm.invoke(prompt).content)
+            remedial_texts.append(invoke_with_retry(report_llm, prompt).content)
         state["remedial_content"] = "\n\n---\n\n".join(remedial_texts)
 
     state["evaluation_result"]["weak_concepts"] = []
+    state["next_step"] = "end"
     return state
 
 def report_generation_agent(state: TutorState) -> TutorState:
     """Agent 5: Generates structured JSON report."""
-    metrics_str = json.dumps(state["profile_metrics"])
-    prompt = f"""Generate a personalized report based on these metrics: {metrics_str}.
-    Return strictly JSON:
-    {{"strengths": ["..."], "weak_areas": ["..."], "recommended_lessons": ["lesson.pdf"], "revision_order": ["..."], "next_topics": ["..."]}}"""
+    metrics = state.get("profile_metrics", {})
+    qa_history = metrics.get("qa_history", [])
+    history_str = json.dumps(qa_history)
+    
+    prompt = f"""You are an expert AI tutor. Review the following student performance history for this session:
+{history_str}
 
-    response = report_llm.invoke(prompt)
+Review each question's verdict and explanation. 
+Identify patterns across the incorrect answers (e.g., recurring misconceptions, a specific sub-topic that's consistently wrong). 
+Identify what the correct answers reveal about the student's actual strengths (not just that they got it right, but what concept they clearly understand well). 
+Write the 'strengths' and 'weak_areas' fields based on this real analysis of the specific questions and answers, not generic statements.
+
+Return strictly JSON format:
+{{"strengths": ["..."], "weak_areas": ["..."], "recommended_lessons": ["lesson.pdf"], "revision_order": ["..."], "next_topics": ["..."]}}"""
+
+    response = invoke_with_retry(report_llm, prompt)
     try:
         json_str = response.content[response.content.find('{'):response.content.rfind('}')+1]
         state["final_report"] = json.loads(json_str)
@@ -171,7 +212,8 @@ def build_tutor_graph():
         "generate_quiz": "quiz_agent",
         "evaluate_answer": "eval_agent",
         "remedial_rag": "remedial_agent",
-        "generate_report": "report_agent"
+        "generate_report": "report_agent",
+        "end": END
     })
 
     workflow.add_edge("explainer", "router")
@@ -181,5 +223,3 @@ def build_tutor_graph():
     workflow.add_edge("report_agent", END)
 
     return workflow.compile()
-
-

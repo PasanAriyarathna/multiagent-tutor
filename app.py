@@ -5,6 +5,18 @@ from topic_extractor import extract_topics_from_lessons
 st.set_page_config(page_title="Intelligent Tutor", layout="wide")
 
 graph = build_tutor_graph()
+
+def safe_invoke(state):
+    try:
+        return graph.invoke(state)
+    except Exception as e:
+        if "rate_limit" in str(e).lower() or "429" in str(e).lower():
+            st.error("The tutor is briefly busy — please wait a few seconds and try again.")
+            if st.button("Retry"):
+                st.rerun()
+            st.stop()
+        raise e
+
 if "state" not in st.session_state:
     st.session_state.state = TutorState(
         student_id="S001", topic="Python Basics", student_question="",
@@ -46,13 +58,11 @@ if not categories:
     st.warning("Could not detect topics automatically — please type a topic manually.")
     topic = st.text_input("What topic are you studying?", value="Python Loops")
 else:
-    st.markdown('<div class="card-container">', unsafe_allow_html=True)
     col1, col2 = st.columns(2)
     with col1:
         selected_category = st.selectbox("Choose a category:", list(categories.keys()))
     with col2:
         topic = st.selectbox("Choose a topic:", categories[selected_category])
-    st.markdown('</div>', unsafe_allow_html=True)
 
 question = st.text_input("Your Question:", key="question_input")
 
@@ -68,7 +78,7 @@ if ask_clicked:
         st.session_state.state["student_question"] = question
         st.session_state.state["next_step"] = "explain"
         with st.spinner("Explaining..."):
-            st.session_state.state = graph.invoke(st.session_state.state)
+            st.session_state.state = safe_invoke(st.session_state.state)
         st.info(st.session_state.state["explanation_text"])
 
 if quiz_clicked:
@@ -78,7 +88,7 @@ if quiz_clicked:
         st.session_state.state["quiz_data"] = ""
         st.session_state.state["evaluation_result"] = {}
         st.session_state.state["next_step"] = "generate_quiz"
-        st.session_state.state = graph.invoke(st.session_state.state)
+        st.session_state.state = safe_invoke(st.session_state.state)
         st.session_state.pop("quiz_questions", None)
         st.session_state.pop("current_question_index", None)
         st.session_state.pop("question_state", None)
@@ -117,7 +127,18 @@ if st.session_state.state.get("quiz_data"):
         else:
             q_type_str = q_type.replace("_", " ").title()
             
-        st.markdown(f"### Question {idx+1}: {q_type_str}")
+        metrics = st.session_state.state.get("profile_metrics", {})
+        history = metrics.get("qa_history", [])
+        correct_count = sum(1 for item in history if item.get("verdict") == "correct")
+        incorrect_count = sum(1 for item in history if item.get("verdict") == "incorrect")
+        
+        col_q, col_score = st.columns([3, 1])
+        with col_q:
+            st.markdown(f"### Question {idx+1}: {q_type_str}")
+        with col_score:
+            if history:
+                st.markdown(f"<div style='text-align: right; color: #9CA3AF; font-size: 14px; margin-top: 20px;'>✅ Correct: {correct_count} &nbsp;|&nbsp; ❌ Incorrect: {incorrect_count}</div>", unsafe_allow_html=True)
+
         st.markdown(f"**Question:** {q.get('question', '')}")
         
         options = q.get("options", [])
@@ -144,8 +165,8 @@ if st.session_state.state.get("quiz_data"):
                 st.session_state.state["remedial_content"] = ""
                 
                 st.session_state.state["next_step"] = "evaluate_answer"
-                with st.spinner("Evaluating Code and Logic..."):
-                    st.session_state.state = graph.invoke(st.session_state.state)
+                with st.spinner("Checking your answer..."):
+                    st.session_state.state = safe_invoke(st.session_state.state)
                     st.session_state.question_state = "evaluated"
                     st.rerun()
 
@@ -220,5 +241,26 @@ if st.session_state.state.get("quiz_data"):
         st.success("You have completed all questions in this quiz!")
         if st.button("Get Final Progress Report"):
             st.session_state.state["next_step"] = "generate_report"
-            st.session_state.state = graph.invoke(st.session_state.state)
-            st.json(st.session_state.state["final_report"])
+            with st.spinner("Generating Report..."):
+                st.session_state.state = safe_invoke(st.session_state.state)
+            
+            report = st.session_state.state.get("final_report", {})
+            st.markdown("## 🎓 Final Progress Report")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("### 💪 Strengths")
+                for s in report.get("strengths", []):
+                    st.markdown(f"- {s}")
+            with col2:
+                st.markdown("### ⚠️ Areas for Improvement")
+                for w in report.get("weak_areas", []):
+                    st.markdown(f"- {w}")
+            
+            st.markdown("### 📚 Recommended Revision Order")
+            for i, rev in enumerate(report.get("revision_order", [])):
+                st.markdown(f"{i+1}. {rev}")
+                
+            st.markdown("### ⏭️ Next Topics")
+            for t in report.get("next_topics", []):
+                st.markdown(f"- {t}")
