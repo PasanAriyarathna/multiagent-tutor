@@ -13,7 +13,15 @@ if "state" not in st.session_state:
         profile_metrics={}, next_step=""
     )
 
-st.title("🧠 AI Tutoring & Adaptive RAG System")
+st.markdown("""
+<div style="display: flex; align-items: center; gap: 12px; margin-bottom: 5px;">
+    <div style="background-color: var(--primary-color, #4F46E5); width: 42px; height: 42px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 24px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+        🧠
+    </div>
+    <h1 style="margin: 0; padding: 0; font-size: 2.2rem; font-weight: 700;">AI Tutoring & Adaptive RAG System</h1>
+</div>
+<p style="color: #9CA3AF; margin-bottom: 2rem; font-size: 1.05rem; margin-top: 0;">Your intelligent, adaptive learning companion.</p>
+""", unsafe_allow_html=True)
 
 @st.cache_data
 def load_topics():
@@ -22,15 +30,39 @@ def load_topics():
 with st.spinner("Loading available topics..."):
     categories = load_topics()
 
+st.markdown("""
+<style>
+.card-container {
+    background-color: var(--secondary-background-color, #1E1E2E);
+    border-radius: 16px;
+    border: 0.5px solid rgba(255,255,255,0.1);
+    padding: 1.25rem;
+    margin-bottom: 1.5rem;
+}
+</style>
+""", unsafe_allow_html=True)
+
 if not categories:
     st.warning("Could not detect topics automatically — please type a topic manually.")
     topic = st.text_input("What topic are you studying?", value="Python Loops")
 else:
-    selected_category = st.selectbox("Choose a category:", list(categories.keys()))
-    topic = st.selectbox("Choose a topic:", categories[selected_category])
+    st.markdown('<div class="card-container">', unsafe_allow_html=True)
+    col1, col2 = st.columns(2)
+    with col1:
+        selected_category = st.selectbox("Choose a category:", list(categories.keys()))
+    with col2:
+        topic = st.selectbox("Choose a topic:", categories[selected_category])
+    st.markdown('</div>', unsafe_allow_html=True)
 
 question = st.text_input("Your Question:", key="question_input")
-if st.button("Ask a question about this topic"):
+
+col_btn1, col_btn2 = st.columns(2)
+with col_btn1:
+    ask_clicked = st.button("Ask a question about this topic", use_container_width=True)
+with col_btn2:
+    quiz_clicked = st.button("Take a Quiz", type="primary", use_container_width=True)
+
+if ask_clicked:
     if question:
         st.session_state.state["topic"] = topic
         st.session_state.state["student_question"] = question
@@ -39,7 +71,7 @@ if st.button("Ask a question about this topic"):
             st.session_state.state = graph.invoke(st.session_state.state)
         st.info(st.session_state.state["explanation_text"])
 
-if st.button("Take a Quiz"):
+if quiz_clicked:
     with st.spinner("Generating Quiz..."):
         st.session_state.state["topic"] = topic
         st.caption(f"Debug: generating quiz for topic = {st.session_state.state['topic']}")
@@ -122,7 +154,16 @@ if st.session_state.state.get("quiz_data"):
             verdict = eval_res.get('verdict', 'incorrect').lower()
             
             if verdict == "correct":
-                st.success("✅ Correct")
+                st.markdown("""
+<div style="background-color: rgba(34,197,94,0.12); border: 1px solid rgba(34,197,94,0.3); border-radius: 14px; padding: 1.1rem 1.25rem; margin-bottom: 1.5rem;">
+    <div style="color: #22C55E; font-weight: bold; font-size: 1.1rem; display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+        <span style="font-size: 1.3rem;">✅</span> Correct
+    </div>
+    <div style="color: var(--text-color, #E5E7EB); font-size: 14px;">
+        Great job! You nailed it. Keep up the good work.
+    </div>
+</div>
+""", unsafe_allow_html=True)
             else:
                 # Extract student's submitted answer
                 student_ans_str = st.session_state.state.get("student_answer", "")
@@ -142,9 +183,29 @@ if st.session_state.state.get("quiz_data"):
                     my_ans = "No answer submitted"
 
                 # Single, clean colored box display
-                error_msg = f"❌ **Incorrect**\n\n**Your answer:** {my_ans}\n\n**Correct answer:** {correct_ans}\n\n**Why:** \n{explanation}"
+                import html
+                my_ans_safe = html.escape(my_ans)
+                correct_ans_safe = html.escape(str(correct_ans))
+                
+                st.markdown(f"""
+<div style="background-color: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.3); border-radius: 14px; padding: 1.1rem 1.25rem; margin-bottom: 1.5rem;">
+    <div style="color: #EF4444; font-weight: bold; font-size: 1.1rem; display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
+        <span style="font-size: 1.3rem;">❌</span> Incorrect
+    </div>
+    <div style="display: grid; grid-template-columns: 120px 1fr; gap: 8px 16px; margin-bottom: 20px; font-size: 14px;">
+        <div style="color: #9CA3AF;">Your answer:</div>
+        <div style="color: var(--text-color, #F3F4F6); font-weight: 500;">{my_ans_safe}</div>
+        <div style="color: #9CA3AF;">Correct answer:</div>
+        <div style="color: #22C55E; font-weight: 500;">{correct_ans_safe}</div>
+    </div>
+    <div style="line-height: 1.6; font-size: 14px; color: var(--text-color, #E5E7EB); border-top: 1px solid rgba(255,255,255,0.1); padding-top: 16px;">
+
+{explanation}
+
+    </div>
+</div>
+""", unsafe_allow_html=True)
                 print(f"DEBUG [Question {idx+1}]: Rendering explanation -> {explanation[:100]}...")
-                st.error(error_msg)
                 
             st.markdown("Are you ready for the next question?")
             if st.button("Next Question"):
